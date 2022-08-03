@@ -1,0 +1,6 @@
+*build
+*.sh
+*__pycache__
+*figs
+*data
+models/

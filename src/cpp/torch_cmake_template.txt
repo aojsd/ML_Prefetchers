@@ -1,0 +1,19 @@
+cmake_minimum_required(VERSION 3.10)
+
+# Debug symbols with optimization
+set(CMAKE_BUILD_TYPE RelWithDebInfo)
+
+project(  <project_name>   VERSION <version number> )
+
+# This sets the C++ version to C++17
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+# Import Torch C++ (search includes /usr/local/share/cmake)
+find_package(Torch REQUIRED)
+
+# Make target
+add_executable(  <project_name>   <source files> )
+
+# Link Torch C++ libs
+target_link_libraries(  <project_name>   "${TORCH_LIBRARIES}")

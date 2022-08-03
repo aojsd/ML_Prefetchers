@@ -1,0 +1,15 @@
+Total misses: 72214
+Cache Size: 1GB
+Total predictions: 177803
+Useful prefetches: 105589
+Repeat prefetches: 49648
+Unused prefetches: 22566
+Useful percentage: 59.385
+Repeat percentage: 27.923
+	Tagging: True
+
+Embedding Size:	256
+Hidden Size:	256
+Classes:		68052
+
+Simulation took 20549.983998298645 seconds

@@ -1,0 +1,12 @@
+Loading model from file: ../models/tf_gc_comb_weighted.pt
+Total misses: 13225
+Cache Size: 1GB
+Total predictions: 242999
+Useful prefetches: 229774
+Repeat prefetches: 7823
+Unused prefetches: 5402
+Useful percentage: 94.558
+Repeat percentage: 3.219
+	Tagging: True
+
+Simulation took 1559.3088593482971 seconds

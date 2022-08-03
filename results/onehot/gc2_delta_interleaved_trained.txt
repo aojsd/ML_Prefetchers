@@ -1,0 +1,16 @@
+Loading model from file: ../../Final_Project/models/onehot/gc2_delta_interleaved.onehot
+Total misses: 11695
+Cache Size: 1GB
+Total predictions: 177803
+Useful prefetches: 166108
+Repeat prefetches: 8595
+Unused prefetches: 3100
+Useful percentage: 93.422
+Repeat percentage: 4.834
+	Tagging: True
+
+Embedding Size:	256
+Hidden Size:	256
+Classes:		68052
+
+Simulation took 1736.0364232063293 seconds
