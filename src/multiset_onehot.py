@@ -122,7 +122,7 @@ def multiset_eval(net, data_iters, device='cpu'):
     return iter_acc_list
 
 # Merge data from all csv files in a directory
-def load_data_dir(dirname, max_classes, batch_size=128, nrows=-1):
+def load_data_dir(dir, max_classes, prefix="", batch_size=128, nrows=-1):
     # Things to return
     data_iters = []
     iter_sizes = []
@@ -136,15 +136,15 @@ def load_data_dir(dirname, max_classes, batch_size=128, nrows=-1):
     temp_index = {}
     temp_rev = {}
     count = 0
-    dir = os.fsencode(dirname)
     for f in os.listdir(dir):
-        fname = dirname + "/" + os.fsdecode(f)
-        if nrows != -1:
-            data = pd.read_csv(fname, nrows=nrows, header=None)
-        else:
-            data = pd.read_csv(fname, header=None)
-        csvs.append(data)
-        iter_sizes.append(len(data.index))
+        if f.startswith(prefix):
+            fname = dir + "/" + f
+            if nrows != -1:
+                data = pd.read_csv(fname, nrows=nrows, header=None)
+            else:
+                data = pd.read_csv(fname, header=None)
+            csvs.append(data)
+            iter_sizes.append(len(data.index))
 
     min_sz = min(iter_sizes)
     for data, sz in zip(csvs, iter_sizes):
@@ -202,10 +202,9 @@ def load_data_dir(dirname, max_classes, batch_size=128, nrows=-1):
     return data_iters, iter_sizes, index_map, rev_map, max_classes
 
 # Print validation accuracy results for each input file
-def print_results(dirname, val_accs):
-    dir = os.fsencode(dirname)
-    for f, acc in zip(os.listdir(dir), val_accs):
-        fname = os.fsdecode(f)
+def print_results(dir, prefix, val_accs):
+    files = [f for f in os.listdir(dir) if f.startswith(prefix)]
+    for fname, acc in zip(files, val_accs):
         print(f"Accuracy for {fname}:\t{acc:.6f}")
 
 def main(args):
@@ -217,7 +216,7 @@ def main(args):
     max_classes = args.max_classes
     batch_size = args.batch_size
     train_size = args.train_size
-    data_iters, iter_sizes, _, _, num_classes = load_data_dir(datadir, max_classes, batch_size, train_size)
+    data_iters, iter_sizes, _, _, num_classes = load_data_dir(datadir, max_classes, args.prefix, batch_size, train_size)
     print("Number of Classes: " + str(num_classes))
 
     # Model parameters
@@ -267,11 +266,12 @@ def main(args):
 
     # Validation test
     dataset_accs = multiset_eval(net.to(device), data_iters, device=device)
-    print_results(datadir, dataset_accs)
+    print_results(datadir, args.prefix, dataset_accs)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("datadir", help="Directory containing input datasets to train/test on", type=str)
+    parser.add_argument("--prefix", help="Shared prefix to search for files in directory", type=str, default="")
     parser.add_argument("--train_size", help="Size of training set", default=-1, type=int)
     parser.add_argument("--batch_size", help="Batch size for training", default=512, type=int)
     parser.add_argument("--epochs", help="Number of epochs to train", default=10, type=int)

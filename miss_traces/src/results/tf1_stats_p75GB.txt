@@ -1,0 +1,4 @@
+Total misses: 251969
+Cache Size: 0.75GB
+
+Simulation took 1368.592707157135 seconds

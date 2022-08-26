@@ -6,7 +6,6 @@
 
 # Imports
 import gzip
-from textwrap import indent
 import time
 import argparse
 import random
@@ -112,23 +111,29 @@ class DLPrefetcher():
 
         self.x = torch.tensor([x]).to(self.device)
 
-    def predict(self):
+    def predict(self, k=1):
         if self.online:
             self.model.eval()
         if self.oh != None:
             model_out, state = self.model(self.x, self.state)
             self.state = tuple([s.detach() for s in list(state)])
-            out = model_out.argmax(dim=-1)
             
-            pred = out.item()
-            if pred in self.oh.rmap:
-                return self.oh.rmap[out.item()], 1
+            # Reverse map indices to addresses
+            def ind(x):
+                if x in self.oh.rmap:
+                    return self.oh.rmap[x], 1
+                else:
+                    return None, 0
+            if k == 1:
+                return [ind(model_out.argmax().item())]
             else:
-                return 0, 0
+                out = model_out.topk(k, dim=-1)
+                preds = out[1].squeeze().tolist()
+                return [ind(p) for p in preds]
         else:
             model_out, self.state = self.model.predict(self.x, self.state)
             out = unsplit(model_out, self.model.splits, self.model.len_split)
-            return out.item(), 1
+            return [out.item(), 1]
         
     def print_parameters(self):
         return
@@ -166,7 +171,27 @@ class MemoryBuffer():
 
 # Run prefetcher on a raw memory access trace
 def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=True,
-                   stream=False, raw=False, repeat_trace=None):
+                   stream=False, raw=False, repeat_trace=None, k=1):
+    # Initialize prefetch window and stats
+    n_lines = 0
+    num_misses = 0
+    num_fetches = 0
+    num_useful = 0
+    num_repeats = 0
+    num_early = 0
+    useful_timeliness = 0
+    complete_timeliness = 0
+    init_buf = []
+    last_miss_vpn = None
+    base_vpn = None
+
+    # Memory buffer
+    mem_buf = MemoryBuffer(int(buffer_size * (1 << 18)))
+
+    # Prefetch lists
+    prefetch_list = {}
+    evicted_preds = {}
+
     # Function for extracting VPN from file
     def get_VPN(line):
         data = line.strip()
@@ -174,23 +199,61 @@ def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=T
         vpn = miss_addr >> 12
         return vpn
 
-    # Memory buffer
-    mem_buf = MemoryBuffer(int(buffer_size * (1 << 18)))
+    # Prefetch logic function
+    def do_prefetch(n_fetches, n_repeats, n_misses):
+        # Make prediction
+        for pred, rec in prefetcher.predict(k):
+            if pred != None:
+                n_fetches += 1
+                
+                # Add result to vpn if using deltas, to base_vpn if relative addressing
+                if not stream and not raw:
+                    pred += vpn
+                elif stream:
+                    pred += base_vpn
+
+                # Track prediction and add to memory
+                if not mem_buf.vpn_in(pred):
+                    prefetch_list[pred] = n_misses
+
+                    # Re-prefetched, remove from evicted prefetches list
+                    evicted_preds.pop(pred, None)
+
+                    # Eviction tracking
+                    evicted = mem_buf.insert_page(pred)
+                    if evicted in prefetch_list:
+                        evicted_preds[evicted] = prefetch_list.pop(evicted)
+                        
+                else:
+                    # Track repeated prefetches (prediction already in memory)
+                    n_repeats += 1
+
+                    # Gather data
+                    # if repeat_trace != None:
+                    #     w_str = "pred " + str(num_misses) + ":" + "\t"
+                    #     if not stream and not raw:
+                    #         w_str += "d: " + str(pred - vpn)
+                    #     elif stream:
+                    #         w_str += str(pred - base_vpn)
+        return n_fetches, n_repeats
+
+    # Prefetch learning function
+    def do_prefetcher_learn(addr, last_miss_addr, base_addr):
+        if not stream and not raw:
+            delta = addr - last_miss_addr
+            last_miss_addr = addr
+            prefetcher.learn(delta)
+        elif raw:
+            prefetcher.learn(addr)
+        elif stream:
+            base_addr += prefetcher.get_buf_entry(0)
+            prefetcher.base_update()
+            prefetcher.learn(addr - base_addr)
+        return last_miss_addr, base_addr
 
     # Skip lines
     for _ in range(skip):
         input.readline()
-
-    # Initialize prefetch window and stats
-    n_lines = 0
-    num_misses = 0
-    num_fetches = 0
-    num_useful = 0
-    num_repeats = 0
-    num_unused = 0
-    init_buf = []
-    last_miss_vpn = None
-    base_vpn = None
 
     # Initialize buffer for window-based models
     if init:
@@ -238,7 +301,6 @@ def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=T
         last_miss_vpn = 0
 
     # Start prefetching on memory access trace
-    prefetched_vpns = set()
     while n_lines < n or n == -1:
         line = input.readline()
         if not line:
@@ -246,102 +308,48 @@ def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=T
         n_lines += 1
         vpn = get_VPN(line)
 
-        # Check for page miss
+        # If page miss
         if not mem_buf.vpn_in(vpn):
-            evicted = mem_buf.insert_page(vpn)
-            if evicted in prefetched_vpns:
-                num_unused += 1
-                prefetched_vpns.remove(evicted)
-
-            # Prefetch logic start
             num_misses += 1
 
-            # Learn off of miss delta or address
-            if not stream and not raw:
-                delta = vpn - last_miss_vpn
-                last_miss_vpn = vpn
-                prefetcher.learn(delta)
-            elif raw:
-                prefetcher.learn(vpn)
-            elif stream:
-                base_vpn += prefetcher.get_buf_entry(0)
-                prefetcher.base_update()
-                prefetcher.learn(vpn - base_vpn)
+            # Check for early prefetch
+            if vpn in evicted_preds:
+                num_early += 1
+                complete_timeliness += num_misses - evicted_preds[vpn]
+                del evicted_preds[vpn]
 
-            # Make prediction
-            pred, rec = prefetcher.predict()
-            if pred != None:
-                num_fetches += 1
-                
-                # Add result to vpn if using deltas, to base_vpn if relative addressing
-                if not stream and not raw:
-                    pred += vpn
-                elif stream:
-                    pred += base_vpn
-
-                # Track prediction and add to memory
-                if not mem_buf.vpn_in(pred):
-                    prefetched_vpns.add(pred)
-                    mem_buf.insert_page(pred)
-                else:
-                    # Track repeated prefetches (prediction already in memory)
-                    num_repeats += 1
-
-                    # Gather data
-                    if repeat_trace != None:
-                        w_str = "pred " + str(num_misses) + ":" + "\t"
-                        if not stream and not raw:
-                            w_str += "d: " + str(pred - vpn)
-                        elif stream:
-                            w_str += str(pred - base_vpn)
+            # Eviction tracking
+            evicted = mem_buf.insert_page(vpn)
+            if evicted in prefetch_list:
+                evicted_preds[evicted] = prefetch_list.pop(evicted)
+            
+            # Learn and predict
+            last_miss_vpn, base_vpn = do_prefetcher_learn(vpn, last_miss_vpn, base_vpn)
+            num_fetches, num_repeats = do_prefetch(num_fetches, num_repeats, num_misses)
 
         # If page hit
         else:
             # Check if a prefetch is useful (used at least once)
-            if vpn in prefetched_vpns:
+            if vpn in prefetch_list:
                 # increment useful only on new use
                 num_useful += 1
-                prefetched_vpns.remove(vpn)
+                diff = num_misses - prefetch_list.pop(vpn)
+                complete_timeliness += diff
+                useful_timeliness += diff
 
                 # Learn and predict on a useful prefetch (should test with or without)
                 if tagging:
-                    if not stream and not raw:
-                        delta = vpn - last_miss_vpn
-                        last_miss_vpn = vpn
-                        prefetcher.learn(delta)
-                    elif raw:
-                        prefetcher.learn(vpn)
-                    else:
-                        base_vpn += prefetcher.get_buf_entry(0)
-                        prefetcher.base_update()
-                        prefetcher.learn(vpn - base_vpn)
+                    last_miss_vpn, base_vpn = do_prefetcher_learn(vpn, last_miss_vpn, base_vpn)
+                    num_fetches, num_repeats = do_prefetch(num_fetches, num_repeats, num_misses)
+            
+    # Timeliness avg
+    useful_timeliness /= num_useful
+    complete_timeliness /= num_useful + num_early
 
-                    pred, rec = prefetcher.predict()
-                    if pred != None:
-                        num_fetches += 1
-                        if not stream and not raw:
-                            pred += vpn
-                        elif stream:
-                            pred += base_vpn
-
-                        if not mem_buf.vpn_in(pred):
-                            prefetched_vpns.add(pred)
-                            mem_buf.insert_page(pred)
-                        else:
-                            num_repeats += 1
-
-                            # Gather data
-                            if repeat_trace != None:
-                                w_str = "pred " + str(num_misses) + ":" + "\t"
-                                if not stream and not raw:
-                                    w_str += "d: " + str(pred - vpn)
-                                elif stream:
-                                    w_str += str(pred - base_vpn)
-
-    num_unused += len(prefetched_vpns)
-    return num_misses, num_fetches, num_useful, num_repeats, num_unused
+    return num_misses, num_fetches, num_useful, num_repeats, num_early, useful_timeliness, complete_timeliness
 
 def main(args):
+    torch.manual_seed(0)
     if not args.nocuda:
         device = torch.device('cuda:0')
     else:
@@ -353,10 +361,10 @@ def main(args):
     if args.oh or args.comb:
         # Get parameters and index 
         if args.comb:
-            _, _, index_map, rev_map, _ = load_data_dir(args.miss_file, args.max_classes)
+            _, _, index_map, rev_map, _ = load_data_dir(args.miss_file, args.max_classes, prefix=args.prefix)
             classes = args.max_classes
             oh_params = OnehotParams(index_map, rev_map)
-        if args.miss_file != None:
+        elif args.miss_file != None:
             _, _, index_map, rev_map, classes = load_data(args.miss_file)
             oh_params = OnehotParams(index_map, rev_map)
         else:
@@ -370,14 +378,14 @@ def main(args):
         # Online training parameters
         online_params = None
         if args.online:
-            if args.replay:
+            if args.replay_learn:
                 online_params = OnlineParams(True)
             else:
                 online_params = OnlineParams(False)
 
         # LSTM Parameters
-        e_dim = 256
-        h_dim = 256
+        e_dim = 32
+        h_dim = 32
         layers = 1
         dropout = 0.1
 
@@ -409,26 +417,50 @@ def main(args):
 
     # Run simulation
     input = gzip.open(args.infile, 'r')
-    misses, fetches, useful, repeats, unused = pref_raw_trace(input, prefetcher, args.s, args.n, args.b,
-                                                    init=False, tagging=tagging, stream=False, raw=False)
-    print("Total misses: " + str(misses))
-    print("Cache Size: " + str(args.b) + "GB")
-    print("Total predictions: " + str(fetches))
-    print("Useful prefetches: " + str(useful))
-    print("Repeat prefetches: " + str(repeats))
-    print("Unused prefetches: " + str(unused))
-    print("Useful percentage: %.3f" % (useful*100/fetches))
-    print("Repeat percentage: %.3f" % (repeats*100/fetches))
-    print("\tTagging: " + str(tagging))
+    misses, fetches, useful, repeats, early, use_time, comp_time = pref_raw_trace(
+        input, prefetcher, args.s, args.n, args.b, init=False,
+        tagging=tagging, stream=False, raw=False, k=args.k
+    )
+
+    print("Total misses:\t" + str(misses))
+    print("Cache Size:\t" + str(args.b) + "GB")
+    print("Total predictions:\t" + str(fetches))
+    print("Useful prefetches:\t" + str(useful))
+    print("Repeat prefetches:\t" + str(repeats))
+    print("Early prefetches:\t" + str(early))
+    print("Useful Timeliness:\t" + str(use_time))
+    print("Complete Timeliness:\t" + str(comp_time))
+    print("\tTagging:\t" + str(tagging))
+    print("\tPredictions per miss:\t" + str(args.k))
+    input.close()
+
+    if args.repeat:
+        input = gzip.open(args.infile, 'r')
+        prefetcher.state = None
+        misses, fetches, useful, repeats, early, use_time, comp_time = pref_raw_trace(
+            input, prefetcher, args.s, args.n, args.b, init=False,
+            tagging=tagging, stream=False, raw=False
+        )
+
+        print("\n---------- Replay Run ----------")
+        print("Total misses:\t" + str(misses))
+        print("Cache Size:\t" + str(args.b) + "GB")
+        print("Total predictions:\t" + str(fetches))
+        print("Useful prefetches:\t" + str(useful))
+        print("Repeat prefetches:\t" + str(repeats))
+        print("Early prefetches:\t" + str(early))
+        print("Useful Timeliness:\t" + str(use_time))
+        print("Complete Timeliness:\t" + str(comp_time))
+        print("\tTagging:\t" + str(tagging))
+        print("\tPredictions per miss:\t" + str(args.k))
+        input.close()
 
     if args.oh:
         print()
         print("Embedding Size:\t" + str(e_dim))
         print("Hidden Size:\t" + str(h_dim))
         print("Classes:\t\t" + str(classes))
-
-    input.close()
-
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("infile", help="input file", type=str, default="")
@@ -436,10 +468,13 @@ if __name__ == "__main__":
     parser.add_argument("-n", help="accesses to simulate", type=int, default=-1)
     parser.add_argument("-b", help="buffer size in GB", type=float, default=1)
     parser.add_argument("-t", help="tag prefetched pages for more predictions", action='store_true', default=False)
+    parser.add_argument("-k", help="number of predictions to make", type=int, default=1)
     parser.add_argument("--oh", help="Use one-hot model", action="store_true", default=False)
-    parser.add_argument("--comb", help="Use combined traces for one-hot model, should be used with --max_classes", action="store_true", default=False)
+    parser.add_argument("--comb", help="Use combined traces for one-hot model, should be used with --max_classes and --prefix", action="store_true", default=False)
+    parser.add_argument("--prefix", help="Prefix for combined models", type=str, default="")
     parser.add_argument("--online", help="Online training", action="store_true", default=False)
-    parser.add_argument("--replay", help="Replay parameters for online training", action='store_true', default=False)
+    parser.add_argument("--replay_learn", help="Use replay memory for online training", action='store_true', default=False)
+    parser.add_argument("--repeat", help="Repeat simulation once (with training)", action='store_true', default=False)
     parser.add_argument("--nocuda", help="Don't use cuda", action="store_true", default=False)
     parser.add_argument("--max_classes", help="Max classes for addresses/deltas", type=int, default=20000)
     parser.add_argument("--model_file", help="File to load/save model parameters to continue training", default=None, type=str)

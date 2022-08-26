@@ -1,0 +1,13 @@
+Loading model from file: ../models/tf_EH32_2p5k.pt
+Total misses:	10078
+Cache Size:	0.75GB
+Total predictions:	532962
+Useful prefetches:	256403
+Repeat prefetches:	231145
+Early prefetches:	48
+Useful Timeliness:	108.92774655522751
+Complete Timeliness:	109.87316485410469
+	Tagging:	True
+	Predictions per miss:	2
+
+Simulation took 1524.1002292633057 seconds

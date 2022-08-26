@@ -1,0 +1,12 @@
+Loading model from file: ../models/tfgc_EH32_2p5k.pt
+Total misses: 5274
+Cache Size: 1GB
+Total predictions: 1272552
+Useful prefetches: 153795
+Repeat prefetches: 994196
+Unused prefetches: 124408
+Useful percentage: 12.086
+Repeat percentage: 78.126
+	Tagging: True
+
+Simulation took 1155.5435383319855 seconds

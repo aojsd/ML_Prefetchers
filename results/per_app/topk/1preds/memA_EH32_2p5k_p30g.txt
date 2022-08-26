@@ -1,0 +1,13 @@
+Loading model from file: ../models/memA_EH32_2p5k.pt
+Total misses:	265745
+Cache Size:	0.3GB
+Total predictions:	371345
+Useful prefetches:	105600
+Repeat prefetches:	179604
+Early prefetches:	10056
+Useful Timeliness:	8263.136846590909
+Complete Timeliness:	15575.140563394894
+	Tagging:	True
+	Predictions per miss:	1
+
+Simulation took 803.92538189888 seconds

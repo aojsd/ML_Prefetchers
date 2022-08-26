@@ -1,0 +1,13 @@
+Loading model from file: ../models/gc_EH32_2p5k.pt
+Total misses:	14561
+Cache Size:	0.5GB
+Total predictions:	714688
+Useful prefetches:	164111
+Repeat prefetches:	475397
+Early prefetches:	132
+Useful Timeliness:	600.6671033629677
+Complete Timeliness:	608.4841789300001
+	Tagging:	True
+	Predictions per miss:	4
+
+Simulation took 1105.3886938095093 seconds

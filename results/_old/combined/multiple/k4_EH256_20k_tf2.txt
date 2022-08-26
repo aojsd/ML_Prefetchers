@@ -1,0 +1,12 @@
+Loading model from file: ../models/tfgc_EH256_20k.pt
+Total misses: 7450
+Cache Size: 1GB
+Total predictions: 882856
+Useful prefetches: 213264
+Repeat prefetches: 545204
+Unused prefetches: 121940
+Useful percentage: 24.156
+Repeat percentage: 61.755
+	Tagging: True
+
+Simulation took 1554.8579533100128 seconds
