@@ -337,7 +337,7 @@ def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=T
                 complete_timeliness += diff
                 useful_timeliness += diff
 
-                # Learn and predict on a useful prefetch (should test with or without)
+                # Learn and predict on a useful prefetch (should test with and without)
                 if tagging:
                     last_miss_vpn, base_vpn = do_prefetcher_learn(vpn, last_miss_vpn, base_vpn)
                     num_fetches, num_repeats = do_prefetch(num_fetches, num_repeats, num_misses)
