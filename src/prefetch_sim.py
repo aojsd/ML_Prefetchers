@@ -1,9 +1,3 @@
-# Associative Recall-Based Page Prefetcher
-#   Uses an autoassociative network as the core pattern learning and
-#   recall (recognition) structure
-#   Takes a stream of page/TLB misses and predicts the next miss VPN
-#   after a short warmup period
-
 # Imports
 import gzip
 import time
