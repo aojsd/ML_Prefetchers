@@ -2,9 +2,8 @@
 import gzip
 import time
 import argparse
-import random
 import torch
-import torch.nn.functional as F
+from dl_prefetch import DLPrefetcher
 from group_prefetcher import *
 from one_hot_pages_model import OneHotNet
 from one_hot_pages_model import load_data
@@ -19,118 +18,10 @@ class OnehotParams():
 
 # Parameters for online training
 class OnlineParams():
-    def __init__(self, replay=False, replay_len=5, replay_freq=5):
+    def __init__(self, replay=False, replay_len=10, replay_freq=5):
         self.replay = replay
         self.rep_len = replay_len
         self.rep_fr = replay_freq
-
-# Deep Learning Prefetcher
-class DLPrefetcher():
-    def __init__(self, model, device, oh_params=None, online_params=None, lr=1e-3):
-        self.model = model.to(device)
-        self.device = device
-        self.state = None
-        self.oh = oh_params
-
-        if oh_params != None:
-            if oh_params.class_limit == None:
-                self.inv_class = len(oh_params.imap)
-                self.c_limit = False
-            else:
-                self.inv_class = oh_params.class_limit
-                self.c_limit = True
-                self.c_alloced = 0
-
-        self.online = False
-        if online_params != None:
-            self.online = True
-            self.online_params = online_params
-            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-
-            self.replay_mem = None
-            if online_params.replay:
-                self.replay_mem = []
-                self.rep_count = 0
-                self.rep_empty = True
-        self.x = None
-
-    def learn(self, x):
-        if self.oh != None:
-            if x in self.oh.imap:
-                x = self.oh.imap[x]
-            elif self.c_limit and self.c_alloced < self.inv_class:
-                self.oh.imap[x] = self.c_alloced
-                self.oh.rmap[self.c_alloced] = x
-
-                x = self.c_alloced
-                self.c_alloced += 1
-            else:
-                x = self.inv_class
-
-        if self.online and not self.x == None and not x == self.inv_class:
-            self.model.train()
-            out, _ = self.model(self.x, self.state)
-            loss = F.cross_entropy(out, torch.tensor([x]).to(self.device))
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-
-            # Interleaved learning using replay memory
-            if self.replay_mem != None:
-                # Replay learning
-                if not self.rep_empty or len(self.replay_mem) > self.online_params.rep_len:
-                    self.rep_empty = False
-                    
-                    if self.rep_count % self.online_params.rep_fr == 0:
-                            
-                        i_list = random.sample(list(range(len(self.replay_mem))), self.online_params.rep_len)
-                        # ind_end = int(self.online_params.rep_len * len(self.replay_mem))
-                        # r_list = self.replay_mem[:ind_end]
-                        for i in i_list:
-                            x_in, targ, state = self.replay_mem[i]
-                            out, new_st = self.model(x_in, tuple(s.to(self.device) for s in state))
-                            loss = F.cross_entropy(out, torch.tensor([targ]).to(self.device))
-                            self.optimizer.zero_grad()
-                            loss.backward()
-                            self.optimizer.step()
-
-                            if i+1 < len(self.replay_mem):
-                                nx, nt, _ = self.replay_mem[i+1]
-                                self.replay_mem[i+1] = (nx, nt, tuple(s.detach().cpu() for s in new_st))
-                    self.rep_count += 1
-
-                # Add to replay memory with some probability   
-                # if random.uniform(0,1) < self.online_params.s_pr:
-                self.replay_mem.append((self.x, x, tuple(s.cpu() for s in self.state)))
-
-        self.x = torch.tensor([x]).to(self.device)
-
-    def predict(self, k=1):
-        if self.online:
-            self.model.eval()
-        if self.oh != None:
-            model_out, state = self.model(self.x, self.state)
-            self.state = tuple([s.detach() for s in list(state)])
-            
-            # Reverse map indices to addresses
-            def ind(x):
-                if x in self.oh.rmap:
-                    return self.oh.rmap[x], 1
-                else:
-                    return None, 0
-            if k == 1:
-                return [ind(model_out.argmax().item())]
-            else:
-                out = model_out.topk(k, dim=-1)
-                preds = out[1].squeeze().tolist()
-                return [ind(p) for p in preds]
-        else:
-            model_out, self.state = self.model.predict(self.x, self.state)
-            out = unsplit(model_out, self.model.splits, self.model.len_split)
-            return [out.item(), 1]
-        
-    def print_parameters(self):
-        return
 
 # Fifo memory buffer for pages
 class MemoryBuffer():
