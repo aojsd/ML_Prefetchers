@@ -1,0 +1,32 @@
+Loading model from file: ../models/tf_EH32_2p5k.pt
+
+/mnt/raid0/wu_michael/traces/memcached/memA_trace.gz
+Total misses:	121044
+Cache Size:	0.75GB
+Total predictions:	167317
+Useful prefetches:	46273
+Repeat prefetches:	65322
+Early prefetches:	98
+Useful Timeliness:	15257.60421844272
+Complete Timeliness:	15460.313234564706
+	Tagging:	True
+	Predictions per miss:	1
+
+/mnt/raid0/wu_michael/traces/tensorflow/tflow_trace1.gz
+Total misses:	12470
+Cache Size:	0.75GB
+Total predictions:	252586
+Useful prefetches:	240116
+Repeat prefetches:	7556
+Early prefetches:	7
+Useful Timeliness:	15.906149527728264
+Complete Timeliness:	16.118601716620233
+	Tagging:	True
+	Predictions per miss:	1
+
+Embedding Size:	32
+Hidden Size:	32
+Classes:		2500
+Learning Rate:	0.0001
+
+Simulation took 2188.6187386512756 seconds

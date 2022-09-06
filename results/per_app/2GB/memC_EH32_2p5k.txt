@@ -1,0 +1,13 @@
+Loading model from file: ../models/memC_EH32_2p5k.pt
+Total misses:	187455
+Cache Size:	2.0GB
+Total predictions:	348843
+Useful prefetches:	161388
+Repeat prefetches:	170247
+Early prefetches:	0
+Useful Timeliness:	59261.54004015168
+Complete Timeliness:	59261.54004015168
+	Tagging:	True
+	Predictions per miss:	1
+
+Simulation took 1168.3059768676758 seconds
