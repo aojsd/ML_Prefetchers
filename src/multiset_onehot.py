@@ -63,9 +63,13 @@ def multiset_train(net, data_iters, iter_sizes, epochs, optimizer, replay_prob=1
 
             optimizer.zero_grad()
             loss = F.cross_entropy(out, target, ignore_index=max_classes)
-            loss.backward()
+
+            # NAN check
+            if torch.isnan(loss).sum() == 0:
+                loss.backward()
+                epoch_loss.append(loss.detach())
             optimizer.step()
-            epoch_loss.append(loss.detach())
+
         
             # Detach state gradients to avoid autograd errors
             state = tuple([s.detach() for s in list(state)])
@@ -137,7 +141,7 @@ def load_data_dir(dir, max_classes, prefix="", batch_size=128, nrows=-1):
     temp_rev = {}
     count = 0
     for f in os.listdir(dir):
-        if f.startswith(prefix):
+        if f.startswith(prefix) and f.endswith(".csv"):
             fname = dir + "/" + f
             if nrows != -1:
                 data = pd.read_csv(fname, nrows=nrows, header=None)

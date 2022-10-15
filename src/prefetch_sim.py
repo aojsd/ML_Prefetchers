@@ -18,10 +18,12 @@ class OnehotParams():
 
 # Parameters for online training
 class OnlineParams():
-    def __init__(self, replay=False, replay_len=10, replay_freq=5):
+    def __init__(self, replay=False, replay_len=100, replay_freq=50):
         self.replay = replay
         self.rep_len = replay_len
         self.rep_fr = replay_freq
+        self.add = True
+        self.clear = False
 
 # Fifo memory buffer for pages
 class MemoryBuffer():
@@ -269,8 +271,8 @@ def main(args):
                 online_params = OnlineParams(False)
 
         # LSTM Parameters
-        e_dim = 32
-        h_dim = 32
+        e_dim = 256
+        h_dim = 256
         layers = 1
         dropout = 0.1
 

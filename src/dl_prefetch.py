@@ -47,14 +47,17 @@ class DLPrefetcher():
                 self.c_alloced = 0
 
         self.online = False
+        self.online_params = online_params
+        self.init_replay = False
         if online_params != None:
             self.online = True
-            self.online_params = online_params
-            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=lr)
 
             self.replay_mem = None
+            self.other_mem = None
             if online_params.replay:
                 self.replay_mem = ReplayMemory()
+                self.other_mem = ReplayMemory()
                 self.loss_vec = None
                 self.count = 0
         self.x = None
@@ -77,6 +80,8 @@ class DLPrefetcher():
         #   Both args should be tensors
         def do_update(input, output, st):
             out, _ = self.model(input.to(self.device), tuple(s.to(self.device) for s in st))
+            if len(out.shape) > 2:
+                out = out.squeeze()
             loss = F.cross_entropy(out, output.to(self.device))
             self.optimizer.zero_grad()
             loss.backward()
@@ -85,17 +90,32 @@ class DLPrefetcher():
 
         # Online learning
         if self.online and not self.x == None and not x == self.inv_class:
-            self.model.train()
-            loss = do_update(self.x, torch.tensor([x]), self.state)
+            if not self.init_replay:
+                self.model.train()
+                loss = do_update(self.x, torch.tensor([x]), self.state)
 
             # Interleaved learning using replay memory
-            if self.replay_mem != None:
-                if self.count % self.online_params.rep_fr == 0:
+            if self.online_params.replay:
+                if self.count % self.online_params.rep_fr == 0 and not self.init_replay:
                     # Function to iterate through list of examples to replay
                     def iterate_replay(rlist, rmem):
+                        inputs = []
+                        targs = []
+                        h = []
+                        c = []
                         for i in rlist:
                             x_in, targ, state = rmem[i]
-                            do_update(x_in, targ, state)
+                            inputs.append(x_in.unsqueeze(0))
+                            targs.append(targ)
+                            h.append(state[0])
+                            c.append(state[1])
+
+                        inputs = torch.cat(inputs, dim=0)
+                        targs = torch.cat(targs, dim=0)
+                        h = torch.cat(h, dim=1)
+                        c = torch.cat(c, dim=1)
+
+                        do_update(inputs, targs, (h,c))
 
                     # Sample replay examples
                     tot = self.online_params.rep_len
@@ -103,8 +123,8 @@ class DLPrefetcher():
                     hs, ms, es = self.replay_mem.sample(0, 0, tot)
 
                     # Do replay learning                    
-                    iterate_replay(hs, self.replay_mem.hard)
-                    iterate_replay(ms, self.replay_mem.med)
+                    # iterate_replay(hs, self.replay_mem.hard)
+                    # iterate_replay(ms, self.replay_mem.med)
                     iterate_replay(es, self.replay_mem.easy)
 
                     # for i in hs:
@@ -136,7 +156,10 @@ class DLPrefetcher():
                 #     self.replay_mem.med.append(sample)
                 # # elif abs(diff) <= .5*std:
                 # else:
-                self.replay_mem.easy.append(sample)
+                if self.online_params.add:
+                    if self.online_params.clear and not self.init_replay:
+                        self.other_mem.easy.append(sample)
+                    self.replay_mem.easy.append(sample)
                 # self.replay_mem.append((self.x, torch.tensor([x]), tuple(s.cpu() for s in self.state)))
 
         self.x = torch.tensor([x])

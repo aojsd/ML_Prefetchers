@@ -31,7 +31,10 @@ class OneHotNet(nn.Module):
         embed_out = self.embed(X)
 
         # Concatenate and feed into LSTM
-        lstm_in = embed_out.unsqueeze(0)
+        if len(embed_out.shape) < 3:
+            lstm_in = embed_out.unsqueeze(0)
+        else:
+            lstm_in = embed_out
         lstm_out, state = self.lstm(lstm_in, lstm_state)
         lstm_out = self.lstm_drop(lstm_out)
 
