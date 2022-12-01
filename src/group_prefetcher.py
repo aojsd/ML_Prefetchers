@@ -3,6 +3,8 @@ import os
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from multiset_onehot import load_data_dir, print_results
 
 def bit_split(X, splits, len_split, signed=True):
     # Separate splits in input based on bitwise values
@@ -13,7 +15,7 @@ def bit_split(X, splits, len_split, signed=True):
     #       the negative section will be all zeroes, and vice versa
     X = torch.abs(X)
     mask = (1 << len_split) - 1
-    out = torch.empty(X.numel(), 0, dtype=torch.long)
+    out = torch.empty(X.numel(), 0, dtype=torch.long, device=X.device)
     for _ in range(splits):
         t_c = torch.bitwise_and(X, mask)
         out = torch.cat([out, t_c.unsqueeze(1)], dim=1)
@@ -32,7 +34,7 @@ def unsplit(X, splits, len_split, signed=True):
     # Output will have shape (N, )
     def get_int(B):
         coef = 1
-        out = torch.zeros(B.shape[0], dtype=torch.long)
+        out = torch.zeros(B.shape[0], dtype=torch.long, device=B.device)
         for i in range(splits):
             out += coef * B[:, -i]
             coef <<= len_split
@@ -120,7 +122,7 @@ class BitsplitEmbedding(nn.Module):
         X = bit_split(X, self.splits, self.len_split, self.signed)
 
         # Perform multiple embeddings for each row in the batch
-        out = torch.empty(N, 0)
+        out = torch.empty(N, 0, device=X.device)
         for i, E in enumerate(self.embeds):
             out = torch.cat([out, E(X[:,i])], dim=-1)
         return out
@@ -172,8 +174,8 @@ class SplitBinaryNet(nn.Module):
         lstm_out = self.lstm_drop(lstm_out)
 
         # Linear Layers
-        mag = self.lin_magnitude(lstm_out).squeeze()
-        sign_probs = self.lin_sign(lstm_out).squeeze()
+        mag = self.lin_magnitude(lstm_out).squeeze(1)
+        sign_probs = self.lin_sign(lstm_out).squeeze(1)
 
         # Loss and prediction calculation
         mag_preds, mag_loss = self.m_soft(mag, target)
@@ -198,64 +200,141 @@ class SplitBinaryNet(nn.Module):
         preds = torch.cat([sign_preds, mag_preds], dim=-1)
         return preds, state
 
-def SplitBinary_eval(net, data_iter, device='cpu', state=None):
+def multiset_eval(net, data_iters, device='cpu'):
     # Compute validation accuracy
     net.eval()
-    val_acc_list = []
-    for _, data in enumerate(data_iter):
-        X = data[0].to(device)
-        target = data[1].to(device)
-        preds, state = net.predict(X, state)
-
-        # Detach to save memory
-        preds = preds.detach()
-        state = tuple([s.detach() for s in list(state)])
-
-        # Calculate accuracy
-        res = unsplit(preds, net.splits, net.len_split) == target
-        acc = res.sum() / res.numel()
-        val_acc_list.append(acc)
-
-    # Calculate overall accuracy
-    val_acc = torch.tensor(val_acc_list).mean()
-
-    return val_acc, state
-
-def SplitBinary_train(net, data_iter, epochs, optimizer, device='cpu', scheduler=None,
-                      print_interval=10, e_start=0):
-    loss_list = []
-    acc_list = []
-
-    for e in range(epochs):
-        net.train()
+    iter_acc_list = []
+    for d_iter in data_iters:
+        val_acc_list = []
         state = None
-        epoch_loss = []
-        for i, data in enumerate(data_iter):
+        for data in d_iter:
             X = data[0].to(device)
             target = data[1].to(device)
-            loss, preds, state = net(X, state, target)
+            out, state = net.predict(X, state)
 
+            # Detach to save memory
+            out = out.detach()
+            state = tuple([s.detach() for s in list(state)])
+
+            # Calculate accuracy
+            res = unsplit(out, net.splits, net.len_split) == target
+            acc = res.sum() / res.numel()
+            val_acc_list.append(acc)
+
+        # Calculate overall accuracy for single dataset
+        val_acc = torch.tensor(val_acc_list).mean()
+        iter_acc_list.append(val_acc)
+
+    return iter_acc_list
+
+# def SplitBinary_eval(net, data_iter, device='cpu', state=None):
+#     # Compute validation accuracy
+#     net.eval()
+#     val_acc_list = []
+#     for _, data in enumerate(data_iter):
+#         X = data[0].to(device)
+#         target = data[1].to(device)
+#         preds, state = net.predict(X, state)
+
+#         # Detach to save memory
+#         preds = preds.detach()
+#         state = tuple([s.detach() for s in list(state)])
+
+#         # Calculate accuracy
+#         res = unsplit(preds, net.splits, net.len_split) == target
+#         acc = res.sum() / res.numel()
+#         val_acc_list.append(acc)
+
+#     # Calculate overall accuracy
+#     val_acc = torch.tensor(val_acc_list).mean()
+
+#     return val_acc, state
+
+def multiset_train(net, data_iters, iter_sizes, epochs, optimizer, device='cpu',
+                   scheduler=None, print_interval=10, e_start=0):
+    # Calculate relative probability to replay for differently sized datasets
+    min_dsize = min(iter_sizes)
+    iter_probs = [x / min_dsize for x in iter_sizes]
+
+    # Begin training
+    loss_list = []
+    acc_list = []
+    net.train()
+    for e in range(epochs):
+        epoch_loss = []
+        epoch_acc  = []
+
+        # Get replay list after one pass-through for interleaving
+        replay_list = []
+        seq_starts = []
+        index = 0
+        for d_iter, rp, sz in zip(data_iters, iter_probs, iter_sizes):
+            # Batch randomization
+            replays = (torch.rand(sz) < rp).tolist()
+
+            state = None
+            for data, to_replay in zip(d_iter, replays):
+                # Add example and initial state to replay list
+                if to_replay:
+                    if state != None:
+                        replay_state = (state[0].to('cpu'), state[1].to('cpu'))
+                    else:
+                        replay_state = None
+                    replay_list.append((data[0], data[1], replay_state))
+                    index += 1
+
+                # Forward pass
+                X = data[0].to(device)
+                out, state = net.predict(X, state)
+
+                # Detach state gradients to avoid autograd errors
+                state = tuple([s.detach() for s in list(state)])
+
+            seq_starts.append(index)
+
+        # Shuffle replay list for interleaved learning
+        epoch_list = torch.randperm(index).tolist()
+        for i in epoch_list:
+            x, targ, st = replay_list[i]
+
+            X = x.to(device)
+            target = targ.to(device)
+            if st != None:
+                state = (st[0].to(device), st[1].to(device))
+            else:
+                state = None
+            # out, state = net(X, state)
             optimizer.zero_grad()
+            loss, out, state = net(X, state, target)
+            # loss = F.cross_entropy(out, target, ignore_index=max_classes)
+
             loss.backward()
+            epoch_loss.append(loss.detach())
             optimizer.step()
-            epoch_loss.append(loss)
+
         
             # Detach state gradients to avoid autograd errors
             state = tuple([s.detach() for s in list(state)])
 
+            # Update replay list with new state, except when at start of new sequence
+            # replay_state = (state[0].to('cpu'), state[1].to('cpu'))
+            # if i+1 < index and i+1 not in seq_starts:
+            #     x, t, st = replay_list[i+1]
+            #     replay_list[i+1] = x, t, replay_state
+
             # Calculate accuracy
-            preds = unsplit(preds, net.splits, net.len_split)
+            preds = unsplit(out, net.splits, net.len_split)
             res = preds == target
             acc = res.sum() / res.numel()
-            acc_list.append(acc)
-
-            # print(i)
+            epoch_acc.append(acc.detach())
 
         if scheduler != None:
             scheduler.step()
         
-        loss = torch.Tensor(epoch_loss).mean()
-        loss_list.append(loss.item())
+        loss = torch.Tensor(epoch_loss).mean().item()
+        acc = torch.Tensor(epoch_acc).mean().item()
+        loss_list.append(loss)
+        acc_list.append(acc)
         if (e+1) % print_interval == 0:
             print(f"Epoch {e+1 + e_start}\tLoss:\t{loss:.8f}\tTrain Accuracy:\t{acc:.4f}")
 
@@ -285,19 +364,16 @@ def main(args):
     torch.manual_seed(0)
 
     # Retrive data from file
-    datafile = args.datafile
-    train_size = args.train_size
+    datadir = args.datadir
     batch_size = args.batch_size
-    if train_size == -1:
-        addr_in, target = load_data(datafile)
-    else:
-        addr_in, target = load_data(datafile, train_size)
+    train_size = args.train_size
+    data_iters, iter_sizes, _, _, _ = load_data_dir(datadir, None, args.prefix, batch_size, train_size)
 
     # Model parameters
     num_bits = 36
-    splits = 4
-    e_dim = 64
-    h_dim = 128
+    splits = 12
+    e_dim = args.eh
+    h_dim = args.eh
     layers = 1
     dropout = 0.1
 
@@ -315,81 +391,78 @@ def main(args):
             print("Loading model from file: {}".format(args.model_file))
             net.load_state_dict(torch.load(args.model_file))
         else:
-            if not args.t:
-                print("Creating model file: {}".format(args.model_file))
-            else:
-                print("No model given to test (model file does not exist)")
-                exit()
+            print("Creating model file: {}".format(args.model_file))
 
-    if not args.t:
-        # Setup data
-        data_iter = setup_data(addr_in, target, batch_size=batch_size)
+    # Training parameters
+    epochs = args.epochs
+    print_in = args.print
+    e_start = args.init_epochs
+    lr = args.lr
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    scheduler = None
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 25, gamma=0.32)
 
-        # Training parameters
-        epochs = args.epochs
-        print_in = args.print
-        e_start = args.init_epochs
-        lr = args.lr
-        optimizer = torch.optim.Adam(net.parameters(), lr=lr)
-        scheduler = None
-        # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 25, gamma=0.32)
+    # Train model
+    tup = multiset_train(net, data_iters, iter_sizes, epochs, optimizer, device=device, scheduler=scheduler,
+                            print_interval=print_in, e_start = e_start)
+    train_loss_list, train_acc_list = tup
 
-        # Train model
-        tup = SplitBinary_train(net, data_iter, epochs, optimizer, device=device, scheduler=scheduler,
-                                print_interval=print_in, e_start = e_start)
-        train_loss_list, train_acc_list = tup
+    # Save model parameters
+    if args.model_file != None:
+        torch.save(net.cpu().state_dict(), args.model_file)
 
-        # Save model parameters
-        if args.model_file != None:
-            torch.save(net.cpu().state_dict(), args.model_file)
-
-        # Save training trends
-        trends = pd.DataFrame(zip(train_loss_list, train_acc_list), columns=['loss', 'val'])
-        if args.trend_file != None:
-            trends.to_csv(args.trend_file, index=False)
+    # Save training trends
+    trends = pd.DataFrame(zip(train_loss_list, train_acc_list), columns=['loss', 'val'])
+    if args.trend_file != None:
+        trends.to_csv(args.trend_file, index=False)
 
     # Validation test
-    if not args.t:
-        val_iter = setup_data(addr_in, target, batch_size=batch_size)
-        val_acc, state = SplitBinary_eval(net, val_iter, device=device)
-        print(f"Val Accuracy:\t{val_acc:.6f}")
+    dataset_accs = multiset_eval(net.to(device), data_iters, device=device)
+    print_results(datadir, args.prefix, dataset_accs)
 
-    # Test model
-    if args.t:
-        # Use 75/25 for val/test
-        h = int(len(addr_in) * 1/2)
-        val_addr = addr_in[:h]
-        val_targ = target[:h]
-        val_iter = setup_data(val_addr, val_targ, batch_size=batch_size)
+    # # Validation test
+    # if not args.t:
+    #     val_iter = setup_data(addr_in, target, batch_size=batch_size)
+    #     val_acc, state = SplitBinary_eval(net, val_iter, device=device)
+    #     print(f"Val Accuracy:\t{val_acc:.6f}")
 
-        # Final training on validation
-        optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
-        scheduler = None
-        tup = SplitBinary_train(net, val_iter, 1, optimizer, device=device, scheduler=scheduler,
-                                print_interval=5, e_start = 0)
-        val_acc, state = SplitBinary_eval(net, val_iter, device=device)
-        print(f"Val Accuracy:\t{val_acc:.6f}")
+    # # Test model
+    # if args.t:
+    #     # Use 75/25 for val/test
+    #     h = int(len(addr_in) * 1/2)
+    #     val_addr = addr_in[:h]
+    #     val_targ = target[:h]
+    #     val_iter = setup_data(val_addr, val_targ, batch_size=batch_size)
 
-        test_addr = addr_in[h:]
-        test_targ = target[h:]
-        test_iter = setup_data(test_addr, test_targ, batch_size=batch_size)
-        test_acc, _ = SplitBinary_eval(net, test_iter, device=device, state=state)
-        print(f"Test Accuracy:\t{test_acc:.6f}")
+    #     # Final training on validation
+    #     optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+    #     scheduler = None
+    #     tup = SplitBinary_train(net, val_iter, 1, optimizer, device=device, scheduler=scheduler,
+    #                             print_interval=5, e_start = 0)
+    #     val_acc, state = SplitBinary_eval(net, val_iter, device=device)
+    #     print(f"Val Accuracy:\t{val_acc:.6f}")
+
+    #     test_addr = addr_in[h:]
+    #     test_targ = target[h:]
+    #     test_iter = setup_data(test_addr, test_targ, batch_size=batch_size)
+    #     test_acc, _ = SplitBinary_eval(net, test_iter, device=device, state=state)
+    #     print(f"Test Accuracy:\t{test_acc:.6f}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("datafile", help="Input data set to train/test on", type=str)
+    parser.add_argument("datadir", help="Directory containing input datasets to train/test on", type=str)
+    parser.add_argument("--prefix", help="Shared prefix to search for files in directory", type=str, default="")
     parser.add_argument("--train_size", help="Size of training set", default=-1, type=int)
-    parser.add_argument("--batch_size", help="Batch size for training", default=100, type=int)
+    parser.add_argument("--batch_size", help="Batch size for training", default=64, type=int)
     parser.add_argument("--epochs", help="Number of epochs to train", default=10, type=int)
     parser.add_argument("--init_epochs", help="Number of epochs already pretrained", default=0, type=int)
     parser.add_argument("--print", help="Print loss during training", default=1, type=int)
-    parser.add_argument("--nocuda", help="Don't use cuda", action="store_false", default=True)
+    parser.add_argument("--nocuda", help="Don't use cuda", action="store_true", default=False)
     parser.add_argument("--model_file", help="File to load/save model parameters to continue training", default=None, type=str)
     parser.add_argument("--trend_file", help="File to save trends and results", default=None, type=str)
-    parser.add_argument("--lr", help="Initial learning rate", default=1e-3, type=float)
-    parser.add_argument("-t", help="Evaluate on test set", action="store_true", default=False)
+    parser.add_argument("--lr", help="Initial learning rate", default=1e-5, type=float)
+    parser.add_argument("--eh", help="Embedding and hidden dimensions", type=int, default=32)
 
     args = parser.parse_args()
     main(args)

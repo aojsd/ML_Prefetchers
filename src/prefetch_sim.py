@@ -3,8 +3,8 @@ import gzip
 import time
 import argparse
 import torch
-from dl_prefetch import DLPrefetcher
-from group_prefetcher import *
+from dl_prefetch import *
+from group_prefetcher import SplitBinaryNet
 from one_hot_pages_model import OneHotNet
 from one_hot_pages_model import load_data
 from multiset_onehot import load_data_dir
@@ -245,6 +245,14 @@ def main(args):
     # Prefetch parameters
     tagging = args.t != 0
 
+    # Online training parameters
+    online_params = None
+    if args.online:
+        if args.replay_learn:
+            online_params = OnlineParams(True)
+        else:
+            online_params = OnlineParams(False)
+
     if args.oh or args.comb:
         # Get parameters and index 
         if args.comb:
@@ -262,14 +270,6 @@ def main(args):
             limit = classes
             oh_params = OnehotParams(index_map, rev_map, limit)
 
-        # Online training parameters
-        online_params = None
-        if args.online:
-            if args.replay_learn:
-                online_params = OnlineParams(True)
-            else:
-                online_params = OnlineParams(False)
-
         # LSTM Parameters
         e_dim = 256
         h_dim = 256
@@ -279,18 +279,25 @@ def main(args):
         # Create net
         net = OneHotNet(classes, e_dim, h_dim, layers, dropout=dropout)
         prefetcher = DLPrefetcher(net, device, oh_params=oh_params, online_params=online_params)
+
+        print("Onehot Network")
+        print("\tEH dim = " + str(e_dim))
     else:
         # Model parameters
         num_bits = 36
-        splits = 4
-        e_dim = 64
-        h_dim = 128
+        splits = 12
+        e_dim = 256
+        h_dim = 256
         layers = 1
         dropout = 0.1
 
         # Create net
         net = SplitBinaryNet(num_bits, e_dim, h_dim, layers, splits=splits, dropout=dropout)
-        prefetcher = DLPrefetcher(net, device)
+        prefetcher = SplitBinaryPref(net, device, online_params=online_params)
+
+        print("Split Binary Network")
+        print(f"\tBit Window = {int(num_bits/splits)}/36")
+        print(f"\tEH Dim = {e_dim}")
 
     # Check for model file
     if args.model_file != None:
@@ -353,7 +360,7 @@ if __name__ == "__main__":
     parser.add_argument("infile", help="input file", type=str, default="")
     parser.add_argument("-s", help="memory accesses to skip", type=int, default=0)
     parser.add_argument("-n", help="accesses to simulate", type=int, default=-1)
-    parser.add_argument("-b", help="buffer size in GB", type=float, default=1)
+    parser.add_argument("-b", help="buffer size in GB", type=float, default=2)
     parser.add_argument("-t", help="tag prefetched pages for more predictions", action='store_true', default=False)
     parser.add_argument("-k", help="number of predictions to make", type=int, default=1)
     parser.add_argument("--oh", help="Use one-hot model", action="store_true", default=False)
