@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class OneHotNet(nn.Module):
-    def __init__(self, num_classes, embed_dim,  hidden_dim, num_layers=1, dropout=0.1):
+    def __init__(self, num_classes, embed_dim,  hidden_dim, num_layers=2, dropout=0.1):
         super(OneHotNet, self).__init__()
         # Embedding layers
         self.embed = nn.Embedding(num_classes+1, embed_dim)
@@ -24,7 +24,7 @@ class OneHotNet(nn.Module):
         # Linear and output layers
         self.lin = nn.Linear(hidden_dim, num_classes+1)
 
-    def forward(self, X, lstm_state : Optional[Tuple[torch.Tensor, torch.Tensor]], num_preds=1):
+    def forward(self, X, lstm_state : Optional[Tuple[torch.Tensor, torch.Tensor]], num_preds : int = 1):
         # X contains raw addresses, has shape (T,):
         # target is a tensor of the target delta probabilities, has shape (T, num_classes)
         # Returns predictions and lstm state
@@ -52,6 +52,53 @@ class OneHotNet(nn.Module):
             out = self.lin(F.relu(lstm_out)).squeeze(0)
 
         return out, state
+
+# class OneHotNet_eCPU(nn.Module):
+#     def __init__(self, num_classes, embed_dim,  hidden_dim, num_layers=2, dropout=0.1):
+#         super(OneHotNet_eCPU, self).__init__()
+#         # Embedding layers
+#         self.embed = nn.Embedding(num_classes+1, embed_dim)
+#         self.h_dim = hidden_dim
+
+#         # Lstm layers
+#         if num_layers > 1:
+#             self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers, batch_first=True, dropout=dropout)
+#             self.lstm_drop = nn.Dropout(0)
+#         else:
+#             self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers, batch_first=True, dropout=0)
+#             self.lstm_drop = nn.Dropout(dropout)
+
+#         # Linear and output layers
+#         self.lin = nn.Linear(hidden_dim, num_classes+1)
+
+#     def forward(self, X, lstm_state : Optional[Tuple[torch.Tensor, torch.Tensor]], num_preds : int = 1):
+#         # X contains raw addresses, has shape (T,):
+#         # target is a tensor of the target delta probabilities, has shape (T, num_classes)
+#         # Returns predictions and lstm state
+#         embed_out = self.embed(X)
+
+#         # Concatenate and feed into LSTM
+#         if len(embed_out.shape) < 3:
+#             lstm_in = embed_out.unsqueeze(0)
+#         else:
+#             lstm_in = embed_out
+#         lstm_out, state = self.lstm(lstm_in, lstm_state)
+#         lstm_out = self.lstm_drop(lstm_out)
+
+#         # Linear Layer
+#         out = self.lin(F.relu(lstm_out)).squeeze(0)
+
+#         # Multiple predictions
+#         while num_preds > 1:
+#             num_preds -= 1
+#             next_in = out.argmax(-1)
+#             embed_out = self.embed(next_in)
+#             lstm_in = embed_out.unsqueeze(0)
+#             lstm_out, state = self.lstm(lstm_in, lstm_state)
+#             lstm_out = self.lstm_drop(lstm_out)
+#             out = self.lin(F.relu(lstm_out)).squeeze(0)
+
+#         return out, state
 
 def OHNet_eval(net, data_iter, device='cpu', state=None):
     # Compute validation accuracy

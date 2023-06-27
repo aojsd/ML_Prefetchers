@@ -35,7 +35,7 @@ class MemoryBuffer():
 
 
 # Run prefetcher on a raw memory access trace
-def process_access_trace(input, n, buffer_size, trace_misses=False, outfile="misses.txt"):
+def process_access_trace(input, n, buffer_size, use_ip=False, trace_misses=False, outfile="misses.txt"):
     # Output miss trace
     if trace_misses:
         out = open(outfile, 'w+')
@@ -54,13 +54,20 @@ def process_access_trace(input, n, buffer_size, trace_misses=False, outfile="mis
         vpn = miss_addr >> 12
         return vpn
 
-    # Start prefetching on memory access trace
+    # Start simulating memory access trace
     while n_lines < n or n == -1:
         line = input.readline()
         if not line:
             break
         n_lines += 1
-        vpn = get_VPN(line)
+        
+        if use_ip:
+            parsed = line.split()
+            ip  = int(parsed[0], 0)
+            acc_t = parsed[1]
+            vpn = int(parsed[2], 0) >> 12
+        else:
+            vpn = get_VPN(line)
 
         # Check for page miss
         if not mem_buf.vpn_in(vpn):
@@ -68,7 +75,10 @@ def process_access_trace(input, n, buffer_size, trace_misses=False, outfile="mis
             num_misses += 1
 
             if trace_misses:
-                out.write(str(vpn) + '\n')
+                if use_ip:
+                    out.write(str(ip) + ' ' + acc_t + ' ' + str(vpn) + '\n')
+                else:
+                    out.write(str(vpn) + '\n')
 
     return num_misses
 
@@ -76,8 +86,8 @@ def main(args):
     # Run simulation
     input = gzip.open(args.infile, 'r')
     if args.o != None:
-        misses = process_access_trace(input, args.n, args.b, True, args.o)
-    misses = process_access_trace(input, args.n, args.b)
+        misses = process_access_trace(input, args.n, args.b, args.ip, True, args.o)
+    misses = process_access_trace(input, args.n, args.b, args.ip)
     print("Total misses: " + str(misses))
     print("Cache Size: " + str(args.b) + "GB")
     input.close()
@@ -89,6 +99,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", help="output file", type=str, default=None)
     parser.add_argument("-b", help="buffer size in GB", type=float, default=1)
     parser.add_argument("-n", help="accesses to simulate", type=int, default=-1)
+    parser.add_argument("--ip", help="use instruction pointers", action='store_true', default=False)
 
     # Timer
     start = time.time()

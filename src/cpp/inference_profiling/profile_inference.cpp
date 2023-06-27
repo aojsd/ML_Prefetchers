@@ -86,6 +86,8 @@ int main(int argc, char** argv){
         auto dat = batch.data;
         std::vector<torch::jit::IValue> input = {dat};
         input.push_back(state);
+
+        // Number of prediction to make into the future
         input.push_back(BATCH_SIZE);
 
         // Start time

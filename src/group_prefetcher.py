@@ -174,8 +174,8 @@ class SplitBinaryNet(nn.Module):
         lstm_out = self.lstm_drop(lstm_out)
 
         # Linear Layers
-        mag = self.lin_magnitude(lstm_out).squeeze(1)
-        sign_probs = self.lin_sign(lstm_out).squeeze(1)
+        mag = self.lin_magnitude(lstm_out).squeeze(0)
+        sign_probs = self.lin_sign(lstm_out).squeeze(0)
 
         # Loss and prediction calculation
         mag_preds, mag_loss = self.m_soft(mag, target)
@@ -317,10 +317,11 @@ def multiset_train(net, data_iters, iter_sizes, epochs, optimizer, device='cpu',
             state = tuple([s.detach() for s in list(state)])
 
             # Update replay list with new state, except when at start of new sequence
-            # replay_state = (state[0].to('cpu'), state[1].to('cpu'))
-            # if i+1 < index and i+1 not in seq_starts:
-            #     x, t, st = replay_list[i+1]
-            #     replay_list[i+1] = x, t, replay_state
+            if len(data_iters) == 1:
+                replay_state = (state[0].to('cpu'), state[1].to('cpu'))
+                if i+1 < index and i+1 not in seq_starts:
+                    x, t, st = replay_list[i+1]
+                    replay_list[i+1] = x, t, replay_state
 
             # Calculate accuracy
             preds = unsplit(out, net.splits, net.len_split)
@@ -371,7 +372,7 @@ def main(args):
 
     # Model parameters
     num_bits = 36
-    splits = 12
+    splits = 4
     e_dim = args.eh
     h_dim = args.eh
     layers = 1
@@ -461,7 +462,7 @@ if __name__ == "__main__":
     parser.add_argument("--nocuda", help="Don't use cuda", action="store_true", default=False)
     parser.add_argument("--model_file", help="File to load/save model parameters to continue training", default=None, type=str)
     parser.add_argument("--trend_file", help="File to save trends and results", default=None, type=str)
-    parser.add_argument("--lr", help="Initial learning rate", default=1e-5, type=float)
+    parser.add_argument("--lr", help="Initial learning rate", default=1e-4, type=float)
     parser.add_argument("--eh", help="Embedding and hidden dimensions", type=int, default=32)
 
     args = parser.parse_args()

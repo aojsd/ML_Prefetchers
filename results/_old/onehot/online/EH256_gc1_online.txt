@@ -1,15 +1,18 @@
-Total misses: 48546
-Cache Size: 1GB
-Total predictions: 157620
-Useful prefetches: 109074
-Repeat prefetches: 32565
-Unused prefetches: 15981
-Useful percentage: 69.201
-Repeat percentage: 20.660
-	Tagging: True
+Onehot Network
+	EH dim = 256
+Total misses:	41799
+Cache Size:	2GB
+Total predictions:	157580
+Useful prefetches:	115821
+Repeat prefetches:	25927
+Early prefetches:	0
+Useful Timeliness:	2254.0446982844214
+Complete Timeliness:	2254.0446982844214
+	Tagging:	True
+	Predictions per miss:	1
 
 Embedding Size:	256
 Hidden Size:	256
-Classes:		40682
+Classes:		20000
 
-Simulation took 6373.719187498093 seconds
+Simulation took 3377.2619891166687 seconds

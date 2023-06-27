@@ -1,8 +1,10 @@
 *build
 *.sh
 *__pycache__
-figs
 *data
 models/
 src/replay_lists/
 .vscode
+*.jpeg
+*.svg
+*.pdf

@@ -161,7 +161,8 @@ def load_data_dir(dir, max_classes, prefix="", batch_size=128, nrows=-1):
                     temp_rev[count] = d
                     freqs.append(f_weight)
                     count += 1
-                freqs[temp_index[d]] += f_weight
+                else:
+                    freqs[temp_index[d]] += f_weight
 
         d_frames.append(data)
 
@@ -253,7 +254,7 @@ def main(args):
     print_in = args.print
     e_start = args.init_epochs
     lr = args.lr
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=1e-7)
     scheduler = None
 
     # Train model
@@ -287,7 +288,7 @@ if __name__ == "__main__":
     parser.add_argument("--nocuda", help="Don't use cuda", action="store_true", default=False)
     parser.add_argument("--model_file", help="File to load/save model parameters to continue training", default=None, type=str)
     parser.add_argument("--trend_file", help="File to save trends and results", default=None, type=str)
-    parser.add_argument("--lr", help="Initial learning rate", default=1e-3, type=float)
+    parser.add_argument("--lr", help="Initial learning rate", default=1e-4, type=float)
     parser.add_argument("--max_classes", help="Max classes for addresses/deltas", type=int, default=20000)
     parser.add_argument("--eh", help="Embedding and hidden dimensions", type=int, default=32)
 
