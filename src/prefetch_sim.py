@@ -371,7 +371,7 @@ def main(args):
         input = open(args.infile, 'r')
     misses, fetches, useful, repeats, early, use_time, comp_time, d_fr = pref_raw_trace(
         input, prefetcher, args.s, args.n, args.b, init=False, mlog=mlog,
-        tagging=tagging, stream=False, raw=False, k=args.k, use_ip=args.ip
+        tagging=tagging, stream=False, raw=args.raw, k=args.k, use_ip=args.ip
     )
     
     # Close miss log
@@ -396,29 +396,29 @@ def main(args):
         df.index.name = 'pred'
         df.to_csv(args.miss_analyze)
 
-    if args.repeat:
-        if args.gz:
-            input = gzip.open(args.infile, 'r')
-        else:
-            input = open(args.infile, 'r')
-        prefetcher.state = None
-        misses, fetches, useful, repeats, early, use_time, comp_time = pref_raw_trace(
-            input, prefetcher, args.s, args.n, args.b, init=False,
-            tagging=tagging, stream=False, raw=False, use_ip=args.ip
-        )
+    # if args.repeat:
+    #     if args.gz:
+    #         input = gzip.open(args.infile, 'r')
+    #     else:
+    #         input = open(args.infile, 'r')
+    #     prefetcher.state = None
+    #     misses, fetches, useful, repeats, early, use_time, comp_time = pref_raw_trace(
+    #         input, prefetcher, args.s, args.n, args.b, init=False,
+    #         tagging=tagging, stream=False, raw=False, use_ip=args.ip
+    #     )
 
-        print("\n---------- Replay Run ----------")
-        print("Total misses:\t" + str(misses))
-        print("Cache Size:\t" + str(args.b) + "GB")
-        print("Total predictions:\t" + str(fetches))
-        print("Useful prefetches:\t" + str(useful))
-        print("Repeat prefetches:\t" + str(repeats))
-        print("Early prefetches:\t" + str(early))
-        print("Useful Timeliness:\t" + str(use_time))
-        print("Complete Timeliness:\t" + str(comp_time))
-        print("\tTagging:\t" + str(tagging))
-        print("\tPredictions per miss:\t" + str(args.k))
-        input.close()
+    #     print("\n---------- Replay Run ----------")
+    #     print("Total misses:\t" + str(misses))
+    #     print("Cache Size:\t" + str(args.b) + "GB")
+    #     print("Total predictions:\t" + str(fetches))
+    #     print("Useful prefetches:\t" + str(useful))
+    #     print("Repeat prefetches:\t" + str(repeats))
+    #     print("Early prefetches:\t" + str(early))
+    #     print("Useful Timeliness:\t" + str(use_time))
+    #     print("Complete Timeliness:\t" + str(comp_time))
+    #     print("\tTagging:\t" + str(tagging))
+    #     print("\tPredictions per miss:\t" + str(args.k))
+    #     input.close()
 
     if args.oh:
         print()
@@ -455,6 +455,7 @@ if __name__ == "__main__":
     parser.add_argument("--miss_analyze", help="File to write prediction frequencies", default=None, type=str)
     parser.add_argument("--eh", help="Embedding and hidden dimensions", type=int, default=256)
     parser.add_argument("--ip", help="use instruction pointers", action='store_true', default=False)
+    parser.add_argument("--raw", help="use raw addresses", action='store_true', default=False)
     parser.add_argument("--mlog", help="Log all misses in a file", default=None, type=str)
 
     # Timer
