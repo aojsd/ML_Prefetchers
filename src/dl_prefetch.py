@@ -1,7 +1,9 @@
 import random
+import numpy as np
 import torch
 import torch.nn.functional as F
 from group_prefetcher import *
+from typing import Optional, Tuple
 
 # Replay memories
 class ReplayMemory():
@@ -47,6 +49,7 @@ class DLPrefetcher():
                 self.inv_class = oh_params.class_limit
                 self.c_limit = True
                 self.c_alloced = 0
+                
 
         self.online = False
         self.online_params = online_params
@@ -314,4 +317,210 @@ class SplitBinaryPref():
         return [(out.item(), 1)]
         
     def print_parameters(self):
+        return
+    
+    
+
+class Voyager(nn.Module):
+    def __init__(self, num_classes, embed_dim, hidden_dim, num_layers=1, dropout=0.1, n_deltas=16):
+        super(Voyager, self).__init__()
+        # Embedding layers
+        self.n_d = n_deltas
+        self.c = num_classes + 2*n_deltas + 1
+        self.embed = nn.Embedding(self.c, embed_dim)
+        self.h_dim = hidden_dim
+
+        # Lstm layers
+        if num_layers > 1:
+            self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers, batch_first=True, dropout=dropout)
+            self.lstm_drop = nn.Dropout(0)
+        else:
+            self.lstm = nn.LSTM(embed_dim, hidden_dim, num_layers, batch_first=True, dropout=0)
+            self.lstm_drop = nn.Dropout(dropout)
+
+        # Linear and output layers
+        self.lin = nn.Linear(hidden_dim, self.c)
+
+    def forward(self, X):
+        # X contains raw addresses, has shape (N, L):
+        # target is a tensor of the target delta probabilities, has shape (N, num_classes)
+        # Returns predictions and lstm state
+        embed_out = self.embed(X)
+
+        # Concatenate and feed into LSTM
+        if len(embed_out.shape) < 3:
+            lstm_in = embed_out.unsqueeze(0)
+        else:
+            lstm_in = embed_out
+        _, (lstm_out, _) = self.lstm(lstm_in, None)
+        lstm_out = self.lstm_drop(lstm_out)
+
+        # Linear Layer
+        out = self.lin(F.relu(lstm_out)).squeeze(0)
+
+        return out
+    
+class V_prefetcher():
+    def __init__(self, model, device, window, oh_params, online_params=None, lr=1e-4, only1=False, raw=True, n_deltas=16):
+        self.model = model.to(device)
+        self.device = device
+        self.state = None
+        self.oh = oh_params
+        self.only1 = only1
+        self.win = window
+        # self.raw = raw
+        self.n_d = n_deltas
+
+        if oh_params.class_limit == None:
+            self.inv_class = len(oh_params.imap)
+            self.c_limit = False
+        else:
+            self.inv_class = oh_params.class_limit
+            self.c_limit = True
+            self.c_alloced = 0
+        self.inv_class += 2*n_deltas
+
+        self.online = False
+        self.online_params = online_params
+        if online_params != None:
+            self.online = True
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+
+        self.x = None
+
+        self.hist = [None for _ in range(self.win)]
+        self.h_tl = 0
+        self.filled = False
+
+        # self.loss_fn = torch.nn.MultiLabelMarginLoss()
+        # self.loss_fn = torch.nn.MultiLabelSoftMarginLoss()
+        self.loss_fn = torch.nn.CrossEntropyLoss()
+        
+        # Statistics
+        self.addr_preds = 0
+        self.delta_preds = 0
+        
+    def to_idx(self, x):
+        def map(addr, add=True):
+            if abs(addr) <= self.n_d:
+                if addr > 0:
+                    addr -= (self.n_d + 1)
+                elif addr < 0:
+                    addr -= self.n_d
+                else:
+                    print("Error: received delta of 0")
+                    exit()
+                idx = self.inv_class + addr
+            elif addr in self.oh.imap:
+                idx = self.oh.imap[addr]
+            elif add and self.c_limit and self.c_alloced < self.inv_class:
+                self.oh.imap[addr] = self.c_alloced
+                self.oh.rmap[self.c_alloced] = addr
+
+                idx = self.c_alloced
+                self.c_alloced += 1
+            else:
+                idx = self.inv_class
+            return idx
+
+        base = self.hist[self.h_tl]
+        extract = lambda y: base if y == base else (y - base if abs(y-base) <= self.n_d else y)
+        # print(f"addr:\t{x}")
+        # print(f"base:\t{base}")
+        # print(f"ext:\t{extract(x)}")
+        return map(extract(x))
+
+
+    def learn(self, x):
+        # Update history window only if not full
+        if not self.filled:
+            self.hist[self.h_tl] = x
+            self.h_tl = (self.h_tl + 1) % self.win
+            self.filled = self.filled or self.h_tl == 0
+            return
+
+        # Create input window
+        # print(self.hist)
+        hist_in = [self.to_idx(a) for a in self.hist]
+        
+        # Create indices tensor and rotate to correctly-ordered history
+        hist_in = torch.tensor(np.roll(hist_in, -self.h_tl))
+        
+        # Setup target value
+        targ = self.to_idx(x)
+
+        # Function for weight update
+        #   Both args should be tensors
+        def do_update(input, targ):
+            self.optimizer.zero_grad()
+
+            # Forward pass
+            out = self.model(input.to(self.device)).squeeze()
+            # if len(out.shape) > 2:
+            #     out = out.squeeze()
+
+            # Backward pass
+            loss = self.loss_fn(out, torch.tensor(targ).to(self.device))
+            loss.backward()
+            self.optimizer.step()
+            return loss.detach().cpu().item()
+
+        # Online learning
+        if self.online and targ != self.inv_class:
+            self.model.train()
+            loss = do_update(hist_in, targ)
+
+        # Update window
+        self.hist[self.h_tl] = x
+        self.h_tl = (self.h_tl + 1) % self.win
+
+    def predict(self, k=1):
+        if self.filled and self.online:
+            self.model.eval()
+            
+            # Create input history
+            hist_in = [self.to_idx(a) for a in self.hist]
+            hist_in = torch.tensor(np.roll(hist_in, -self.h_tl))
+            
+            if self.win != None and not self.filled:
+                return [(0, 0)]
+            model_out = self.model(hist_in.to(self.device))
+            
+            # Reverse map indices to addresses
+            def ind(x, c):
+                delta = self.inv_class - x
+                if delta <= 2*self.n_d and delta != 0:
+                    delta = -delta + self.n_d
+                    if delta >= 0:
+                        delta += 1
+                    
+                    self.delta_preds += 1
+                    return self.hist[self.h_tl] + delta, c
+                elif x in self.oh.rmap:
+                    p = self.oh.rmap[x]
+                    if self.only1:
+                        if p == 1:
+                            return 1, c
+                        else: return 1, 0
+                    else:
+                        self.addr_preds += 1
+                        return p, c
+                else:
+                    return None, 0
+                
+            # Get prediction(s)
+            if k == 1:
+                item = model_out.squeeze().topk(1)
+                preds = [ind(item[1].item(), item[0].item())]
+                return preds
+            else:
+                out = model_out.squeeze().topk(k)
+                preds = [ind(b.item(), a.item()) for a, b in zip(out[0], out[1])]
+                return preds
+        else:
+            return []
+        
+    def print_parameters(self, base=""):
+        print(f"{base}Address predictions:\t{self.addr_preds}")
+        print(f"{base}Delta predictions:\t{self.delta_preds}")
         return

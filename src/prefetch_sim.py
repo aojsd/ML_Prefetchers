@@ -320,12 +320,14 @@ def main(args):
         h_dim = args.eh
         layers = 1
         dropout = 0.1
+        n_deltas = 16
 
         # Create net
-        net = OneHotNet(classes, e_dim, h_dim, layers, dropout=dropout)
-        prefetcher = DLPrefetcher(net, device, oh_params=oh_params, online_params=online_params, window=args.win)
+        window = 8
+        net = Voyager(classes, e_dim, h_dim, layers, dropout=dropout, n_deltas=n_deltas)
+        prefetcher = V_prefetcher(net, device, window, oh_params=oh_params, online_params=online_params, n_deltas=n_deltas)
 
-        print("Onehot Network")
+        print("Voyager")
         print("\tEH dim = " + str(e_dim))
     else:
         # Model parameters
@@ -388,6 +390,7 @@ def main(args):
     print("Complete Timeliness:\t" + str(comp_time))
     print("\tTagging:\t" + str(tagging))
     print("\tPredictions per miss:\t" + str(args.k))
+    prefetcher.print_parameters("\t")
     input.close()
 
     # Analyze original distribution of misses vs distribution of useful prefetches
