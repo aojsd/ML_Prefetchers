@@ -8,3 +8,4 @@ src/replay_lists/
 *.jpeg
 *.svg
 *.pdf
+*test.txt
