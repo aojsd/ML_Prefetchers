@@ -460,7 +460,8 @@ class V_prefetcher():
             #     out = out.squeeze()
 
             # Backward pass
-            loss = self.loss_fn(out, torch.tensor(targ).to(self.device))
+            targ = torch.tensor([targ]).to(self.device)
+            loss = self.loss_fn(out.unsqueeze(0), targ)
             loss.backward()
             self.optimizer.step()
             return loss.detach().cpu().item()
