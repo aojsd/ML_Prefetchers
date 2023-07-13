@@ -320,7 +320,7 @@ def main(args):
         h_dim = args.eh
         layers = 1
         dropout = 0.1
-        n_deltas = 16
+        n_deltas = 64
 
         # Create net
         window = 8

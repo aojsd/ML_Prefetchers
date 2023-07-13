@@ -361,14 +361,12 @@ class Voyager(nn.Module):
         return out
     
 class V_prefetcher():
-    def __init__(self, model, device, window, oh_params, online_params=None, lr=1e-4, only1=False, raw=True, n_deltas=16):
+    def __init__(self, model, device, window, oh_params, online_params=None, lr=1e-4, n_deltas=16):
         self.model = model.to(device)
         self.device = device
         self.state = None
         self.oh = oh_params
-        self.only1 = only1
         self.win = window
-        # self.raw = raw
         self.n_d = n_deltas
 
         if oh_params.class_limit == None:
@@ -399,36 +397,39 @@ class V_prefetcher():
         # Statistics
         self.addr_preds = 0
         self.delta_preds = 0
-        
-    def to_idx(self, x):
-        def map(addr, add=True):
-            if abs(addr) <= self.n_d:
-                if addr > 0:
-                    addr -= (self.n_d + 1)
-                elif addr < 0:
-                    addr -= self.n_d
-                else:
-                    print("Error: received delta of 0")
-                    exit()
-                idx = self.inv_class + addr
-            elif addr in self.oh.imap:
-                idx = self.oh.imap[addr]
-            elif add and self.c_limit and self.c_alloced < self.inv_class:
-                self.oh.imap[addr] = self.c_alloced
-                self.oh.rmap[self.c_alloced] = addr
-
-                idx = self.c_alloced
-                self.c_alloced += 1
+    
+    # Convert address or delta to class
+    def map(self, addr, add=True):
+        if abs(addr) <= self.n_d:
+            if addr > 0:
+                addr -= (self.n_d + 1)
+            elif addr < 0:
+                addr -= self.n_d
             else:
-                idx = self.inv_class
-            return idx
+                print("Error: received delta of 0")
+                exit()
+            idx = self.inv_class + addr
+        elif addr in self.oh.imap:
+            idx = self.oh.imap[addr]
+        elif add and self.c_limit and self.c_alloced < self.oh.class_limit:
+            self.oh.imap[addr] = self.c_alloced
+            self.oh.rmap[self.c_alloced] = addr
 
+            idx = self.c_alloced
+            self.c_alloced += 1
+        else:
+            idx = self.inv_class
+        return idx
+    
+    # Convert history of addresses to classes and deltas
+    def hist_idx(self, trans_only=False):
         base = self.hist[self.h_tl]
-        extract = lambda y: base if y == base else (y - base if abs(y-base) <= self.n_d else y)
-        # print(f"addr:\t{x}")
-        # print(f"base:\t{base}")
-        # print(f"ext:\t{extract(x)}")
-        return map(extract(x))
+        extract = lambda i, y: base if y == base else (y - self.hist[i-1] if abs(y-self.hist[i-1]) <= self.n_d else y)
+        transformed = [extract(i, y) for i, y in enumerate(self.hist)]
+        
+        if trans_only:
+            return transformed
+        return [self.map(y) for y in transformed]
 
 
     def learn(self, x):
@@ -441,13 +442,16 @@ class V_prefetcher():
 
         # Create input window
         # print(self.hist)
-        hist_in = [self.to_idx(a) for a in self.hist]
+        hist_in = self.hist_idx()
         
         # Create indices tensor and rotate to correctly-ordered history
         hist_in = torch.tensor(np.roll(hist_in, -self.h_tl))
         
         # Setup target value
-        targ = self.to_idx(x)
+        prev_addr = self.hist[(self.h_tl - 1) % self.win]
+        delta = x - prev_addr
+        targ = delta if abs(delta) <= self.n_d else x
+        targ = self.map(targ)
 
         # Function for weight update
         #   Both args should be tensors
@@ -480,8 +484,9 @@ class V_prefetcher():
             self.model.eval()
             
             # Create input history
-            hist_in = [self.to_idx(a) for a in self.hist]
+            hist_in = self.hist_idx()
             hist_in = torch.tensor(np.roll(hist_in, -self.h_tl))
+            prev_addr = self.hist[(self.h_tl - 1) % self.win]
             
             if self.win != None and not self.filled:
                 return [(0, 0)]
@@ -496,16 +501,11 @@ class V_prefetcher():
                         delta += 1
                     
                     self.delta_preds += 1
-                    return self.hist[self.h_tl] + delta, c
+                    return prev_addr + delta, c
                 elif x in self.oh.rmap:
                     p = self.oh.rmap[x]
-                    if self.only1:
-                        if p == 1:
-                            return 1, c
-                        else: return 1, 0
-                    else:
-                        self.addr_preds += 1
-                        return p, c
+                    self.addr_preds += 1
+                    return p, c
                 else:
                     return None, 0
                 
