@@ -361,7 +361,7 @@ class Voyager(nn.Module):
         return out
     
 class V_prefetcher():
-    def __init__(self, model, device, window, oh_params, online_params=None, lr=1e-4, n_deltas=16):
+    def __init__(self, model, device, window, oh_params, online_params=None, lr=1e-4, n_deltas=64):
         self.model = model.to(device)
         self.device = device
         self.state = None
