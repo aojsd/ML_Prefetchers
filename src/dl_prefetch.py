@@ -424,7 +424,7 @@ class V_prefetcher():
     # Convert history of addresses to classes and deltas
     def hist_idx(self, trans_only=False):
         base = self.hist[self.h_tl]
-        extract = lambda i, y: base if y == base else (y - self.hist[i-1] if abs(y-self.hist[i-1]) <= self.n_d else y)
+        extract = lambda i, y: base if y == base else (y - self.hist[(i-1) % self.win] if abs(y - self.hist[(i-1) % self.win]) <= self.n_d else y)
         transformed = [extract(i, y) for i, y in enumerate(self.hist)]
         
         if trans_only:
