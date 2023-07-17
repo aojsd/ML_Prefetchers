@@ -450,6 +450,8 @@ class V_prefetcher():
         # Setup target value
         prev_addr = self.hist[(self.h_tl - 1) % self.win]
         delta = x - prev_addr
+        if delta == 0:
+            return
         targ = delta if abs(delta) <= self.n_d else x
         targ = self.map(targ)
 
