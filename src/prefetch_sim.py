@@ -61,7 +61,7 @@ class MemoryBuffer():
 
 # Run prefetcher on a raw memory access trace
 def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=True, mlog=None,
-                   stream=False, raw=False, repeat_trace=None, k=1, use_ip=False):
+                   stream=False, raw=False, repeat_trace=None, k=1, use_ip=False, b_pages=False):
     # Initialize prefetch window and stats
     n_lines = 0
     num_misses = 0
@@ -76,7 +76,10 @@ def pref_raw_trace(input, prefetcher, skip, n, buffer_size, tagging=True, init=T
     base_vpn = None
 
     # Memory buffer
-    mem_buf = MemoryBuffer(int(buffer_size * (1 << 18)))
+    if b_pages:
+        mem_buf = MemoryBuffer(buffer_size)
+    else:
+        mem_buf = MemoryBuffer(int(buffer_size * (1 << 18)))
 
     # Prefetch lists
     prefetch_list = {}
@@ -373,7 +376,7 @@ def main(args):
         input = open(args.infile, 'r')
     misses, fetches, useful, repeats, early, use_time, comp_time, d_fr = pref_raw_trace(
         input, prefetcher, args.s, args.n, args.b, init=False, mlog=mlog,
-        tagging=tagging, stream=False, raw=args.raw, k=args.k, use_ip=args.ip
+        tagging=tagging, stream=False, raw=args.raw, k=args.k, use_ip=args.ip, b_pages=args.b_pages
     )
     
     # Close miss log
@@ -460,6 +463,7 @@ if __name__ == "__main__":
     parser.add_argument("--ip", help="use instruction pointers", action='store_true', default=False)
     parser.add_argument("--raw", help="use raw addresses", action='store_true', default=False)
     parser.add_argument("--mlog", help="Log all misses in a file", default=None, type=str)
+    parser.add_argument("--b_pages", help="args.b becomes exact number of pages", action="store_true", default=False)
 
     # Timer
     start = time.time()
